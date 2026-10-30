@@ -1,0 +1,5 @@
+# Shipped offline voice weights exceed GitHub's ordinary file limit.
+*.onnx filter=lfs diff=lfs merge=lfs -text
+*.aar filter=lfs diff=lfs merge=lfs -text
+*.so filter=lfs diff=lfs merge=lfs -text
+app/src/main/assets/kokoro-int8-multi-lang-v1_0/voices.bin filter=lfs diff=lfs merge=lfs -text

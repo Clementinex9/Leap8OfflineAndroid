@@ -1,0 +1,27 @@
+Kokoro-82M v1.0
+
+Model project: https://huggingface.co/hexgrad/Kokoro-82M
+Code: https://github.com/hexgrad/kokoro
+Architecture: StyleTTS 2 (Li et al.) and ISTFTNet
+Model trainer credited by upstream: @rzvzn
+License: Apache License 2.0. The complete license is packaged with the model.
+
+The model is redistributed as the official sherpa-onnx Kokoro v1.0 int8 export,
+including the October 26, 2026 STFT quantization correction.
+Export project: https://github.com/k2-fsa/sherpa-onnx
+Model source: https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models
+The application's English voice IDs preserve the official speaker mapping.
+
+Upstream training-data attribution:
+- Koniwa tnc, under CC BY 3.0:
+  https://github.com/koniwa/koniwa
+  https://creativecommons.org/licenses/by/3.0/deed.ja
+- SIWIS French Speech Synthesis Database, under CC BY 4.0:
+  https://datashare.ed.ac.uk/handle/10283/2353
+  https://creativecommons.org/licenses/by/4.0/
+These are acknowledged by the model authors at
+https://huggingface.co/hexgrad/Kokoro-82M#creative-commons-attribution
+
+The model weights and voice embeddings are unchanged from the verified upstream
+release. Leap 8 exposes a subset of the included English voices. eSpeak NG
+phonemization data is separately covered by the packaged GPL-3.0 license.
