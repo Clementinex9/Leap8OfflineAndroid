@@ -1,31 +1,45 @@
-# Offline pronunciation: Kokoro v1.0
+# Offline pronunciation: Kokoro v1.0 HD Hybrid & C++20 DSP (0.5.4)
 
-Leap 8 uses the **Kokoro-82M v1.0 int8** model, not Piper LJSpeech, for normal
-pronunciation. No API key, network request, or Android system voice download is needed.
-The existing sherpa-onnx 1.13.2 AAR supports Kokoro and `GenerationConfig` directly;
-the model runs on CPU inside `:leap8_speech`, isolated from the learning UI and GGUF runtime.
+Leap 8 uses **Kokoro-82M v1.0** in a **0.5.4 hybrid precision graph (`model.onnx`, 163,902,037 bytes)**
+paired with a **C++20 `enhanceSpeechPcm` studio mastering chain**, not Piper LJSpeech, for
+offline pronunciation. No API key, network request, or Android system voice download is needed.
+The existing sherpa-onnx 1.13.2 AAR runs Kokoro inside `:leap8_speech`, isolated from the learning
+UI and GGUF runtime, and probes NNAPI with a `450 ms` warm-up latency gate before falling back
+to 4-thread CPU synthesis.
+
+## 0.5.4 HD vocoder reconstruction & acoustic DSP
+
+Pure int8 `DynamicQuantizeLinear` + `ConvInteger` operators inside `/decoder/generator/` produce
+audible `4.8 kHz` and `9.6 kHz` whistling harmonics as well as muffled mid-band formants on ARM
+devices. In `0.5.4`:
+
+- All `100` vocoder operators under `/decoder/generator/` are dequantized back to native **FP32**
+  (`model.onnx`, replacing `model.int8.onnx`), while lightweight frontend modules stay quantized.
+- Every synthesized 24 kHz float PCM clip passes through C++20 `Leap8CoreNative.enhanceSpeechPcm`
+  (`libleap8_core.so`): DC removal + 75 Hz high-pass, `-1.2 dB @ 240 Hz` de-mud, `+3.0 dB @ 2.6 kHz`
+  presence lift, `-10.0 dB (Q=12) @ 4.8 kHz` narrow whistle notch, split-band `5.8 kHz` de-esser,
+  `-5.0 dB @ 8.0 kHz` silk shelf, 4th-order `9.0 kHz` Butterworth low-pass, `0.80f` C1 soft-knee
+  limiter, and `10 ms / 18 ms` cosine fades.
+- Natural inter-clause silence scaling (`0.62x`) trims stiff pauses while preserving natural
+  stress timing.
 
 ## Provenance and compatibility
 
 - Model upstream: <https://huggingface.co/hexgrad/Kokoro-82M> (Apache-2.0 weights).
 - sherpa model documentation and speaker mapping:
   <https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html>.
-- Release archive:
+- Upstream base archive:
   <https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_0.tar.bz2>.
-- Official release API snapshot: `work/tts-model-release.json`.
-- Archive size: **132,353,410 bytes**; SHA-256:
+- Upstream archive size: **132,353,410 bytes**; SHA-256:
   `72c347230107ef8a31098ec4d468a605244beef5f1ed00db97efa13518800653`.
-- Required model SHA-256 after the October 26, 2026 STFT int8 fix:
-  `75635ea3b85a32d00094dcdd61a258aba87c160f7c264c304a7b3ae9d734195e`.
-- Fix rationale and maintainer confirmation that the release models were replaced:
-  <https://github.com/k2-fsa/sherpa-onnx/pull/4087>.
-  Older HF int8 snapshots may still have the affected `4b86207e...` model. Do not substitute
-  that file: short utterances can produce NaN or loud rail-pinned output on ARM.
+- Upstream int8 STFT fix reference (`4b86207e...` crash/NaN avoidance):
+  <https://github.com/k2-fsa/sherpa-onnx/pull/4087> (Leap 8 `0.5.4` further dequantizes all
+  `/decoder/generator/*` vocoder layers in `model.onnx` for whistle-free hi-fi waveform synthesis).
 - Kotlin 1.13.2 API:
   <https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.2/sherpa-onnx/kotlin-api/Tts.kt>.
 
-`tools/download-kokoro.ps1` downloads the official archive in 1 MiB pieces and verifies
-the official SHA-256 before extraction. A CDN address override is request-scoped only;
+`tools/download-kokoro.ps1` downloads the official upstream archive in 1 MiB pieces and verifies
+its SHA-256 when re-bootstrapping base voice assets. A CDN address override is request-scoped only;
 it does not modify Windows DNS, proxy settings, or hosts files.
 
 ## Voice preferences
@@ -55,7 +69,8 @@ Initial requests remain queued while the voice service loads.
 
 ## Verification
 
-Host-only tests: `VoiceCatalogTest`, `VoiceAudioGuardTest` (seven cases).
+Host-only tests: `VoiceCatalogTest`, `VoiceAudioGuardTest`, and `Leap8CoreNativeTest`
+(covering audio guards, pause scaling, and C++20 `enhanceSpeechPcm` DSP filtering).
 Device test: `NaturalVoiceProcessIpcTest` exercises the real isolated service, both the
 default word and a British sentence at 0.85×. It requires the played reply to contain the
 selected voice ID, non-empty samples and a 24 kHz sample rate. Log tag `Leap8Voice`

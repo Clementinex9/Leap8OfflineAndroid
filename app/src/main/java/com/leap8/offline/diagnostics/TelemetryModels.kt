@@ -1,5 +1,6 @@
 package com.leap8.offline.diagnostics
 
+import com.leap8.offline.core.Leap8CoreNative
 import com.leap8.offline.domain.AiProcessor
 import com.leap8.offline.domain.AiProvider
 
@@ -48,5 +49,6 @@ data class DeveloperTelemetrySnapshot(
 internal fun compactSamples(samples: List<PerformanceSample>, maximum: Int = 120): List<PerformanceSample> {
     if (samples.size <= maximum) return samples
     require(maximum >= 2)
-    return (0 until maximum).map { samples[(it.toLong() * samples.lastIndex / (maximum - 1L)).toInt()] }
+    val indices = Leap8CoreNative.compactSampleIndices(samples.size, maximum)
+    return indices.map { samples[it] }
 }

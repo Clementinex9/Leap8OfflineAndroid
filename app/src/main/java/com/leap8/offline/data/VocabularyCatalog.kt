@@ -1,56 +1,54 @@
 package com.leap8.offline.data
 
 import android.content.Context
+import com.leap8.offline.core.Leap8CoreNative
 import com.leap8.offline.domain.VocabularyCard
-import java.util.zip.GZIPInputStream
 
 /** Every IELTS-tagged ECDICT entry, enriched by the 30 editorial SeedContent cards. */
 class VocabularyCatalog(context: Context) {
     private val appContext = context.applicationContext
 
     val cards: List<VocabularyCard> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        val editorial = SeedContent.vocabulary.associateBy { it.word.lowercase() }
-        val covered = mutableSetOf<String>()
-        val result = ArrayList<VocabularyCard>(5_100)
-        GZIPInputStream(appContext.assets.open(DATASET)).bufferedReader(Charsets.UTF_8).useLines { lines ->
-            lines.filterNot { it.startsWith('#') || it.isBlank() }.forEach { line ->
-                val columns = line.split('\t', limit = 8)
-                if (columns.size != 8) return@forEach
-                val wordKey = columns[1].lowercase()
-                val replacement = editorial[wordKey]
-                if (replacement != null) {
-                    if (covered.add(wordKey)) result += replacement
-                } else {
-                    val phonetic = columns[2].trim().let { value ->
-                        if (value.isBlank() || value.startsWith('/')) value else "/$value/"
-                    }
-                    result += VocabularyCard(
-                        id = columns[0],
-                        word = columns[1],
-                        phonetic = phonetic,
-                        partOfSpeech = columns[3].ifBlank { "word" },
-                        meaningZh = columns[4],
-                        meaningZhTw = columns[4],
-                        example = "",
-                        exampleZh = "",
-                        roots = "",
-                        collocations = emptyList(),
-                        level = columns[5],
-                        topic = columns[6]
-                    )
-                }
-            }
+        val gzipBytes = appContext.assets.open(DATASET).use { it.readBytes() }
+        val editorial = SeedContent.vocabulary.map { card ->
+            Leap8CoreNative.NativeVocabCard(
+                id = card.id,
+                word = card.word,
+                phonetic = card.phonetic,
+                partOfSpeech = card.partOfSpeech,
+                meaningZh = card.meaningZh,
+                meaningZhTw = card.meaningZhTw,
+                example = card.example,
+                exampleZh = card.exampleZh,
+                roots = card.roots,
+                collocations = card.collocations,
+                level = card.level,
+                topic = card.topic
+            )
         }
-        SeedContent.vocabulary.filterNot { it.word.lowercase() in covered }.forEach(result::add)
-        result.distinctBy { it.word.lowercase() }.also { catalog ->
-            check(catalog.size == EXPECTED_TOTAL) {
-                "IELTS vocabulary asset is incomplete: expected $EXPECTED_TOTAL words, found ${catalog.size}"
-            }
+        Leap8CoreNative.loadVocabularyCatalog(
+            gzipBytes = gzipBytes,
+            editorialCards = editorial,
+            sortByLevelWord = true
+        ).map { nativeCard ->
+            VocabularyCard(
+                id = nativeCard.id,
+                word = nativeCard.word,
+                phonetic = nativeCard.phonetic,
+                partOfSpeech = nativeCard.partOfSpeech,
+                meaningZh = nativeCard.meaningZh,
+                meaningZhTw = nativeCard.meaningZhTw,
+                example = nativeCard.example,
+                exampleZh = nativeCard.exampleZh,
+                roots = nativeCard.roots,
+                collocations = nativeCard.collocations,
+                level = nativeCard.level,
+                topic = nativeCard.topic
+            )
         }
     }
 
     private companion object {
         const val DATASET = "datasets/ielts_vocabulary.tsv.bin"
-        const val EXPECTED_TOTAL = 5_048
     }
 }

@@ -1,5 +1,7 @@
 package com.leap8.offline.speech
 
+import com.leap8.offline.core.Leap8CoreNative
+
 /** Stable names and the exact speaker IDs in sherpa's Kokoro v1.0 release. */
 data class NaturalVoiceOption(
     val id: String,
@@ -31,8 +33,8 @@ object VoiceCatalog {
         voices.firstOrNull { it.id == id } ?: voices.first()
 
     fun normalizeSpeed(speed: Float): Float =
-        if (speed.isFinite()) speed.coerceIn(.7f, 1.3f) else DEFAULT_SPEED
+        Leap8CoreNative.normalizeVoiceSpeed(speed)
 
     fun effectiveSpeed(speed: Float, slower: Boolean): Float =
-        (normalizeSpeed(speed) * if (slower) .82f else 1f).coerceIn(.6f, 1.3f)
+        Leap8CoreNative.effectiveVoiceSpeed(speed, slower)
 }

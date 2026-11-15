@@ -1,12 +1,33 @@
-# 跃升英语 · Leap 8 0.5.3
+# 跃升英语 · Leap 8 0.5.4
 
-## 当前版本补充
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-0.5.1 加入本地 AI 内存保护，0.5.2 加入开发者性能监控，0.5.3 修正 qwen35
-模型的后端路由：当前 GPU/CPU 的 b10333 运行库不兼容此架构，因此只允许使用较新的
-Hexagon NPU 运行库；内存不足或 NPU 不可用时明确报错，不回退到不兼容的 CPU。
-Qwen3-4B 的 NPU → GPU → CPU 回退策略保持不变。0.5.3 已通过 75 项单元测试，
-完整长作文 NPU 评分仍需继续真机回归，不能据此视为已完成全部验收。
+面向华文学习者的原生 Android 离线英语学习应用（`Android 15+ / arm64-v8a`）。默认纯离线运行，核心数据管理、记忆算法、发音评估、音频后处理 DSP 与原生推理桥接已在 **0.5.4** 中全面重构升级为 **C++20 / NEON** 原生实现。
+
+## 0.5.4 核心更新说明
+
+1. **全核心 C++20 原生重构 (`libleap8_core.so` & JNI 统一 C++20)**
+   - 新增独立 C++20 原生引擎 `libleap8_core.so`（`arm64-v8a`、`16 KB` 页对齐、`-O3` + 段裁剪），通过 `Leap8CoreNative` JNI 承接高频核心计算：词典二进制/目录解析与多条件检索、SM-2 间隔重复衰减调度、学习仪表盘批量聚合、四维作文 Rubric 评分与 AI 修订解析、LCS 逐词发音比对、流式 SHA-256 校验以及 GGUF 架构头解析。
+   - `:llama-runtime` (`libleap8_llama_jni.so`) 与 `:npu-qairt` (`libleap8_genie.so` / `libleap8_hexagon_jni.so`) 原生 JNI 桥接模块同步统一升级至 C++20 标准。
+2. **高清真人感离线语音与频谱级降噪（消除 4.8 kHz / 9.6 kHz 高频刺耳噪音）**
+   - 修复前代全量 INT8 Vocoder (`model.int8.onnx`) 在波形重建阶段因整数反量化产生的刺耳高频哨声与低清哑音：将 Kokoro-82M v1.0 `/decoder/generator/*` 下全部 `100` 个 Vocoder 算子反量化还原为 **FP32 精度**（混合结构 `model.onnx`，`163,902,037` 字节），前端保留紧凑 INT8。
+   - 在 C++20 `enhanceSpeechPcm` 中实装 **Studio 级语音母带后处理链**：DC 偏置消除 + 75 Hz 高通滤波 → `-1.2 dB @ 240 Hz` 去箱音 → `+3.0 dB @ 2.6 kHz` 人声临场提升 → `-10.0 dB (Q=12) @ 4.8 kHz` 精准哨音切除 → `5.8 kHz` 分频动态去齿音 → `-5.0 dB @ 8.0 kHz` 柔和滚降 → 4 阶 `9.0 kHz` Butterworth 低通 → `0.80f` C1 平滑限幅与 `10 ms / 18 ms` 余弦淡入淡出。
+   - 对 24 kHz 实测合成语音执行 Welch 功率谱对比显示：`4.8 kHz` 尖峰啸叫抑制 **17.3 dB**，`9.6 kHz` 高频谐波毛刺衰减至 **-96.4 dB**，同时 `1–4 kHz` 人声核心清晰度频段能量提升 **+6.8 dB**；并将句间停顿自然压缩为 `0.62x` 比例，减少慢速朗读机械卡顿感。
+3. **NPU / NNAPI 语音调度保护与多进程隔离**
+   - 保留主进程与四个不可导出 AI 独立子进程（`:leap8_npu`、`:leap8_gpu`、`:leap8_cpu`、`:leap8_speech`）的防 OOM 隔离架构。
+   - `:leap8_speech` 语音服务引入 NNAPI NPU 预热耗时门限（`MAX_NNAPI_WARMUP_MS = 450 ms`）：设备驱动支持且编译迅速时优先走硬件加速，超时则自动回退至 4 线程 CPU 稳定合成，避免首次朗读阻塞。
+4. **添加 MIT 开源协议 & 构建脚本脱敏**
+   - 仓库根目录新增标准 **MIT License** ([LICENSE](LICENSE))；同步清理构建与冒烟测试脚本中的本机环境绝对路径依赖，改用环境变量自动解析。
+
+### 图解架构与声学优化效果
+
+![Leap8 0.5.4 C++20 全核心重构与多进程端侧异构推理架构](docs/images/cpp20_architecture_0.5.4.png)
+
+![Leap8 0.5.4 Kokoro 高清语音频谱对比与 C++20 均衡器实测频响](docs/images/kokoro_spectral_upgrade_0.5.4.png)
+
+## 历史版本演进摘要
+
+0.5.1 加入本地 AI 内存保护，0.5.2 加入开发者性能监控，0.5.3 修正 `qwen35` 的 Hexagon NPU 专属路由并保持 `Qwen3-4B` 的 NPU → GPU → CPU 自动回退策略。0.5.4 在上述真机隔离与路由基础上完成全核心 C++20 化改造与 Kokoro 声学重建升级。
 
 ### 从 GitHub 获取完整构建资源
 
@@ -15,14 +36,13 @@ Qwen3-4B 的 NPU → GPU → CPU 回退策略保持不变。0.5.3 已通过 75 �
 不能直接用于完整构建。大语言模型 GGUF、APK、密钥、本机配置、构建缓存和调试记录不提交。
 GGUF 由使用者自行准备并在 App 内导入；构建依赖及许可证见下文。
 
-面向华文学习者的原生 Android 英语学习应用。默认完全离线；可主动切换到 OpenAI、DeepSeek、
-Qwen API 接口。包含词汇、听说读写、语法、模考、学习记录、AI 教练和 AI 精修前后对比。
-评分是学习反馈，不是 IELTS 官方成绩，也不保证固定时间达到 8 分。
+默认完全离线；可主动切换到 OpenAI、DeepSeek、Qwen API 接口。包含词汇、听说读写、语法、
+模考、学习记录、AI 教练和 AI 精修前后对比。评分是学习反馈，不是 IELTS 官方成绩，
+也不保证固定时间达到 8 分。
 
-## 本版变化
+## 历史特性与版本脉络 (0.5.3 → 0.5.4)
 
-- 发音改用随包离线的 Kokoro-82M v1.0 int8，提供八种英美音色、全局语速和试听；单词、
-  精听、口语统一使用神经语音，不再直接绕过它调用机器化系统 TTS。
+- **发音引擎升级**：从 `0.5.3` 引入的 Kokoro-82M v1.0 全量 int8 升级为 **0.5.4 混合高精度 FP32 Vocoder + C++20 `enhanceSpeechPcm` 语音母带链**，提供八种英美音色、全局语速和试听；单词、精听、口语统一使用神经语音。
 - SM8750 使用真实 Hexagon HTP v79 加速同一个 Qwen3-4B GGUF；NPU、Adreno OpenCL GPU、
   ARM CPU 各自独立进程，失败按顺序自动回退，界面报告实际后端。
 - UI 参考 awesome-design-md 的 Apple 色彩与排版规范重做，使用 Android 中英文字体；
@@ -103,13 +123,12 @@ APK 位于 app/build/outputs/apk/performance/。此构建非 debuggable、启用
 环境并在退出后恢复。不设 HEXAGON_RUNTIME / QAIRT_PATH 时可构建 API 26+ CPU/GPU 版，但
 没有 NPU 运行库。旧 QAIRT/Genie 继续作为可选集成，不是公开 Hexagon GGUF 路线的前置条件。
 
-## 离线边界和许可
+## 离线边界和 MIT / 第三方开源许可
 
+- 本项目原创 Kotlin / Jetpack Compose 界面层与 C++20 原生引擎代码依据根目录 [LICENSE](LICENSE) 按 **MIT License** 开源。
 - 词库、课程、Kokoro 发音、学习记录、规则反馈、已导入 GGUF 可离线使用。
 - 口语转录使用 Android 离线识别，依赖手机已安装的英语离线识别包；并非每家系统均提供。
-- Manifest 的 INTERNET 用于可选 API，禁用明文 HTTP。
-- 商业发布前需母语编辑、教师评分标定、隐私审查、更多真机测试。语音链含 eSpeak NG，
-  应审查 GPL 与对应源码分发义务，不能只因模型为 Apache/MIT 就认为全部依赖均为宽松许可。
+- Manifest 的 `INTERNET` 仅用于可选 API，禁用明文 HTTP；测试与运行时日志严禁写入个人密钥、设备序列号或本机敏感路径。
+- 商业发布前需母语编辑、教师评分标定、隐私审查、更多真机测试。随附的第三方模型与原生库（包括 `sherpa-onnx`、`Kokoro-82M`、`llama.cpp`、`ECDICT` 及 `eSpeak NG` GPL-3.0 音素数据）仍各自受其原许可条款约束。
 
-来源和许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，语音细节见
-[OFFLINE_VOICE.md](docs/OFFLINE_VOICE.md)。
+完整第三方来源和许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，语音工程与频谱优化细节见 [OFFLINE_VOICE.md](docs/OFFLINE_VOICE.md)。

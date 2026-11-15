@@ -1,5 +1,5 @@
-param(
-    [string]$Adb = 'C:\Users\86189\AppData\Local\Android\Sdk\platform-tools\adb.exe',
+﻿param(
+    [string]$Adb = $(if ($env:ANDROID_HOME) { Join-Path $env:ANDROID_HOME 'platform-tools/adb.exe' } else { Join-Path $env:LOCALAPPDATA 'Android/Sdk/platform-tools/adb.exe' }),
     [int]$Rounds = 2
 )
 $ErrorActionPreference = 'Stop'

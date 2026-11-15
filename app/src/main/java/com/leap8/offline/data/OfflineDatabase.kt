@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.leap8.offline.core.Leap8CoreNative
 import com.leap8.offline.domain.*
 import java.time.LocalDate
 
@@ -125,61 +126,72 @@ class OfflineDatabase(context: Context) : SQLiteOpenHelper(context, "leap8_offli
 
     fun dashboard(totalVocabulary: Int): DashboardSnapshot {
         val today = LocalDate.now().toEpochDay()
-        val todaySeconds = scalarLong(
-            "SELECT COALESCE(SUM(duration_seconds), 0) FROM practice_session WHERE created_epoch_day = ?",
-            arrayOf(today.toString())
-        )
-        val sessions = scalarLong("SELECT COUNT(*) FROM practice_session")
-        val learnedWords = scalarLong("SELECT COUNT(*) FROM word_progress WHERE repetitions > 0")
-        val masteredWords = scalarLong("SELECT COUNT(*) FROM word_progress WHERE repetitions >= 5 OR interval_days >= 21")
-        val scheduledDue = scalarLong(
-            "SELECT COUNT(*) FROM word_progress WHERE due_epoch_day <= ?",
-            arrayOf(today.toString())
-        )
-        val storedWords = scalarLong("SELECT COUNT(*) FROM word_progress")
-        val dueWords = (scheduledDue + (totalVocabulary - storedWords).coerceAtLeast(0)).toInt()
-        val skillScores = Skill.entries.associateWith { skill ->
-            readableDatabase.rawQuery(
-                "SELECT AVG(score) FROM practice_session WHERE skill = ?",
-                arrayOf(skill.name)
-            ).use { cursor ->
-                if (cursor.moveToFirst() && !cursor.isNull(0)) {
-                    (cursor.getDouble(0) / 9.0).toFloat().coerceIn(0.08f, 1f)
-                } else 0.35f
+        val db = readableDatabase
+
+        var wpReps = IntArray(0)
+        var wpIntervals = IntArray(0)
+        var wpDueDays = LongArray(0)
+        db.rawQuery("SELECT repetitions, interval_days, due_epoch_day FROM word_progress", null).use { cursor ->
+            val count = cursor.count.coerceAtLeast(0)
+            wpReps = IntArray(count)
+            wpIntervals = IntArray(count)
+            wpDueDays = LongArray(count)
+            var idx = 0
+            while (cursor.moveToNext() && idx < count) {
+                wpReps[idx] = cursor.getInt(0)
+                wpIntervals[idx] = cursor.getInt(1)
+                wpDueDays[idx] = cursor.getLong(2)
+                idx++
             }
         }
-        val average = skillScores.values.average().toFloat()
-        val estimatedBand = ((3.0 + average * 5.0) * 2).toInt() / 2.0
+
+        val skillIndexByName = Skill.entries.withIndex().associate { it.value.name to it.index }
+        var sessSkills = IntArray(0)
+        var sessScores = DoubleArray(0)
+        var sessDurations = IntArray(0)
+        var sessDays = LongArray(0)
+        db.rawQuery("SELECT skill, score, duration_seconds, created_epoch_day FROM practice_session", null).use { cursor ->
+            val count = cursor.count.coerceAtLeast(0)
+            sessSkills = IntArray(count)
+            sessScores = DoubleArray(count)
+            sessDurations = IntArray(count)
+            sessDays = LongArray(count)
+            var idx = 0
+            while (cursor.moveToNext() && idx < count) {
+                sessSkills[idx] = skillIndexByName[cursor.getString(0)] ?: -1
+                sessScores[idx] = cursor.getDouble(1)
+                sessDurations[idx] = cursor.getInt(2)
+                sessDays[idx] = cursor.getLong(3)
+                idx++
+            }
+        }
+
+        val metrics = Leap8CoreNative.computeDashboard(
+            totalVocabulary = totalVocabulary,
+            todayEpochDay = today,
+            wpReps = wpReps,
+            wpIntervals = wpIntervals,
+            wpDueDays = wpDueDays,
+            sessSkills = sessSkills,
+            sessScores = sessScores,
+            sessDurations = sessDurations,
+            sessDays = sessDays
+        )
+        val skillScores = Skill.entries.mapIndexed { index, skill ->
+            skill to metrics.skillNorms[index]
+        }.toMap()
         return DashboardSnapshot(
-            streakDays = calculateStreak(today),
-            todayMinutes = (todaySeconds / 60).toInt(),
-            dueWords = dueWords,
-            learnedWords = learnedWords.toInt(),
-            totalWords = totalVocabulary,
-            newWords = (totalVocabulary - learnedWords).coerceAtLeast(0).toInt(),
-            learningWords = (learnedWords - masteredWords).coerceAtLeast(0).toInt(),
-            masteredWords = masteredWords.toInt(),
-            completedSessions = sessions.toInt(),
-            estimatedBand = estimatedBand.coerceIn(3.0, 8.5),
+            streakDays = metrics.streakDays,
+            todayMinutes = metrics.todayMinutes,
+            dueWords = metrics.dueWords,
+            learnedWords = metrics.learnedWords,
+            totalWords = metrics.totalWords,
+            newWords = metrics.newWords,
+            learningWords = metrics.learningWords,
+            masteredWords = metrics.masteredWords,
+            completedSessions = metrics.completedSessions,
+            estimatedBand = metrics.estimatedBand,
             skillScores = skillScores
         )
     }
-
-    private fun calculateStreak(today: Long): Int {
-        val activeDays = mutableSetOf<Long>()
-        readableDatabase.rawQuery(
-            "SELECT DISTINCT created_epoch_day FROM practice_session ORDER BY created_epoch_day DESC",
-            null
-        ).use { cursor -> while (cursor.moveToNext()) activeDays += cursor.getLong(0) }
-        if (activeDays.isEmpty()) return 1
-        var day = if (today in activeDays) today else today - 1
-        var streak = 0
-        while (day in activeDays) { streak++; day-- }
-        return streak.coerceAtLeast(1)
-    }
-
-    private fun scalarLong(sql: String, args: Array<String>? = null): Long =
-        readableDatabase.rawQuery(sql, args).use { cursor ->
-            if (cursor.moveToFirst()) cursor.getLong(0) else 0L
-        }
 }

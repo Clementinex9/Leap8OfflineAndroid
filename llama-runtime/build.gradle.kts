@@ -19,7 +19,7 @@ android {
             ndk { abiFilters += "arm64-v8a" }
             externalNativeBuild {
                 cmake {
-                    cppFlags += listOf("-std=c++17", "-O3", "-fvisibility=hidden")
+                    cppFlags += listOf("-std=c++20", "-O3", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections")
                     arguments += listOf("-DANDROID_STL=c++_shared", "-DCMAKE_BUILD_TYPE=Release")
                 }
             }

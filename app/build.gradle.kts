@@ -4,19 +4,32 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val skipNativeBuild = System.getenv("LEAP8_SKIP_NATIVE_BUILD") == "1"
+
 android {
     namespace = "com.leap8.offline"
     compileSdk = 35
+    if (!skipNativeBuild) {
+        ndkVersion = "29.0.13113456"
+    }
 
     defaultConfig {
         applicationId = "com.leap8.offline"
         minSdk = if (findProject(":npu-qairt") != null) 35 else 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.5.3"
+        versionCode = 12
+        versionName = "0.5.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         ndk { abiFilters += "arm64-v8a" }
+        if (!skipNativeBuild) {
+            externalNativeBuild {
+                cmake {
+                    cppFlags += listOf("-std=c++20", "-O3", "-fvisibility=hidden")
+                    arguments += listOf("-DANDROID_STL=c++_shared", "-DCMAKE_BUILD_TYPE=Release")
+                }
+            }
+        }
     }
 
     buildTypes {
@@ -47,6 +60,14 @@ android {
         compose = true
         buildConfig = true
     }
+    if (!skipNativeBuild) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.31.6"
+            }
+        }
+    }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
         jniLibs.useLegacyPackaging = true
@@ -56,6 +77,81 @@ android {
     androidResources {
         noCompress += listOf("bin", "json", "tflite", "onnx", "wav", "so")
     }
+}
+
+val hostCoreLibName = when {
+    System.getProperty("os.name").lowercase().contains("win") -> "leap8_core.dll"
+    System.getProperty("os.name").lowercase().contains("mac") -> "libleap8_core.dylib"
+    else -> "libleap8_core.so"
+}
+val hostCoreOutput = layout.buildDirectory.file("host-jni/$hostCoreLibName")
+
+val buildHostCoreJni by tasks.registering {
+    val sourceFile = file("src/main/cpp/leap8_core.cpp")
+    val zigExe = rootProject.file("work/third-party/zig-x86_64-windows-0.15.2/zig.exe")
+    val jdkHome = File(System.getProperty("java.home"))
+    val outputFileProvider = hostCoreOutput
+    inputs.file(sourceFile)
+    outputs.file(outputFileProvider)
+    doLast {
+        val outFile = outputFileProvider.get().asFile
+        outFile.parentFile.mkdirs()
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        val jniInclude = File(jdkHome, "include")
+        val jniPlatformInclude = File(
+            jniInclude,
+            when {
+                isWindows -> "win32"
+                System.getProperty("os.name").lowercase().contains("mac") -> "darwin"
+                else -> "linux"
+            }
+        )
+        val cmd = if (isWindows && zigExe.exists()) {
+            listOf(
+                zigExe.absolutePath,
+                "c++",
+                "-target",
+                "x86_64-windows-gnu",
+                "-shared",
+                "-std=c++20",
+                "-O3",
+                "-I",
+                jniInclude.absolutePath,
+                "-I",
+                jniPlatformInclude.absolutePath,
+                sourceFile.absolutePath,
+                "-o",
+                outFile.absolutePath
+            )
+        } else {
+            val cxx = System.getenv("CXX") ?: "clang++"
+            listOf(
+                cxx,
+                "-shared",
+                "-fPIC",
+                "-std=c++20",
+                "-O3",
+                "-I",
+                jniInclude.absolutePath,
+                "-I",
+                jniPlatformInclude.absolutePath,
+                sourceFile.absolutePath,
+                "-o",
+                outFile.absolutePath
+            )
+        }
+        val process = ProcessBuilder(cmd).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        val exitCode = process.waitFor()
+        if (exitCode != 0) {
+            throw GradleException("Failed to compile host leap8_core JNI ($exitCode):\n$output")
+        }
+    }
+}
+
+tasks.withType<Test>().configureEach {
+    dependsOn(buildHostCoreJni)
+    systemProperty("leap8.core.dll.path", hostCoreOutput.get().asFile.absolutePath)
 }
 
 dependencies {

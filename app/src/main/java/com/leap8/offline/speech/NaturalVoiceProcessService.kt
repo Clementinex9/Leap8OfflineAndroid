@@ -34,6 +34,10 @@ class NaturalVoiceProcessService : Service() {
     private lateinit var messenger: Messenger
     private var neural: SherpaOfflineTts? = null
     private var state = State.NEW
+    @Volatile
+    private var activeProviderLabel = "CPU"
+    @Volatile
+    private var activeModelLabel = MODEL_FILE
     private val clients = ConcurrentHashMap<IBinder, Messenger>()
     private val requests = VoiceRequestState()
     private val playbackLock = Any()
@@ -99,7 +103,7 @@ class NaturalVoiceProcessService : Service() {
 
     private fun initializeVoice(reply: Messenger?) {
         when (state) {
-            State.READY -> sendStatus(reply, true, false, READY_MESSAGE)
+            State.READY -> sendStatus(reply, true, false, readyMessage())
             State.FAILED -> sendStatus(reply, false, true, "Kokoro 离线神经语音不可用")
             State.LOADING -> sendStatus(reply, false, false, "Kokoro 高品质离线语音正在加载…")
             State.NEW -> {
@@ -109,11 +113,11 @@ class NaturalVoiceProcessService : Service() {
                     .onSuccess {
                         neural = it
                         state = State.READY
-                        broadcastStatus(true, false, READY_MESSAGE)
+                        broadcastStatus(true, false, readyMessage())
                     }
                     .onFailure {
                         state = State.FAILED
-                        android.util.Log.e("Leap8Voice", "Kokoro initialization failed", it)
+                        android.util.Log.e(TAG, "Kokoro initialization failed", it)
                         broadcastStatus(false, true, "Kokoro 初始化失败；已由主界面切换系统语音")
                     }
             }
@@ -143,13 +147,17 @@ class NaturalVoiceProcessService : Service() {
                 text, GenerationConfig(
                     sid = voice.speakerId,
                     speed = speed,
-                    silenceScale = .25f,
+                    silenceScale = NATURAL_SILENCE_SCALE,
                     extra = mapOf("lang" to voice.phonemizerVoice)
                 )
             )
             check(audio.samples.isNotEmpty() && audio.sampleRate > 0) { "神经语音未生成有效音频" }
-            VoiceAudioGuard.validate(audio.samples)
-            if (cached == null && text.length <= 240) audioCache.put(cacheKey, audio)
+            if (cached == null) {
+                VoiceAudioGuard.validateAndEnhance(audio.samples, audio.sampleRate)
+                if (text.length <= 240) audioCache.put(cacheKey, audio)
+            } else {
+                VoiceAudioGuard.validate(audio.samples)
+            }
             android.util.Log.i("Leap8Voice", "Kokoro voice=${voice.id} speed=$speed rate=${audio.sampleRate} samples=${audio.samples.size} cached=${cached != null} elapsedMs=${android.os.SystemClock.elapsedRealtime() - generatedAt}")
             if (requests.isCurrent(request)) {
                 play(audio.samples, audio.sampleRate, request)
@@ -176,33 +184,83 @@ class NaturalVoiceProcessService : Service() {
 
     private fun createNeuralVoice(): SherpaOfflineTts {
         val dataDirectory = prepareEspeakData()
+        val assetFiles = assets.list(MODEL_DIR)?.toSet().orEmpty()
+        val selectedModelFile = if (FP32_MODEL_FILE in assetFiles) FP32_MODEL_FILE else MODEL_FILE
         val model = OfflineTtsKokoroModelConfig(
-            model = "$MODEL_DIR/$MODEL_FILE",
+            model = "$MODEL_DIR/$selectedModelFile",
             voices = "$MODEL_DIR/voices.bin",
             tokens = "$MODEL_DIR/tokens.txt",
             dataDir = dataDirectory.absolutePath,
             lexicon = "$MODEL_DIR/lexicon-us-en.txt",
             lengthScale = 1f
         )
-        return SherpaOfflineTts(
-            assetManager = assets,
-            config = OfflineTtsConfig(
-                model = OfflineTtsModelConfig(
-                    kokoro = model,
-                    numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4),
-                    debug = false,
-                    provider = "cpu"
-                ),
-                maxNumSentences = 1,
-                silenceScale = .25f
-            )
-        ).also { engine ->
-            if (engine.sampleRate() != 24_000 || engine.numSpeakers() < 28) {
-                engine.release()
-                error("Kokoro 模型版本或声线不匹配")
+        val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+        var lastError: Throwable? = null
+        for (provider in listOf("nnapi", "cpu")) {
+            val candidate = runCatching {
+                SherpaOfflineTts(
+                    assetManager = assets,
+                    config = OfflineTtsConfig(
+                        model = OfflineTtsModelConfig(
+                            kokoro = model,
+                            numThreads = threads,
+                            debug = false,
+                            provider = provider
+                        ),
+                        maxNumSentences = 1,
+                        silenceScale = NATURAL_SILENCE_SCALE
+                    )
+                ).also { engine ->
+                    if (engine.sampleRate() != 24_000 || engine.numSpeakers() < 28) {
+                        engine.release()
+                        error("Kokoro 模型版本或声线不匹配")
+                    }
+                    val startedAt = android.os.SystemClock.elapsedRealtime()
+                    val warmup = engine.generateWithConfig(
+                        "Hello, welcome to Leap Eight.",
+                        GenerationConfig(
+                            sid = 3,
+                            speed = 1.0f,
+                            silenceScale = NATURAL_SILENCE_SCALE,
+                            extra = mapOf("lang" to "en-us")
+                        )
+                    )
+                    val elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt
+                    if (warmup.samples.isEmpty() || warmup.sampleRate <= 0) {
+                        engine.release()
+                        error("Kokoro $provider warm-up produced empty audio")
+                    }
+                    try {
+                        VoiceAudioGuard.validateAndEnhance(warmup.samples, warmup.sampleRate)
+                    } catch (t: Throwable) {
+                        engine.release()
+                        throw t
+                    }
+                    if (provider == "nnapi" && elapsedMs > MAX_NNAPI_WARMUP_MS) {
+                        engine.release()
+                        error("Kokoro nnapi warm-up too slow (${elapsedMs}ms > ${MAX_NNAPI_WARMUP_MS}ms); using CPU")
+                    }
+                    android.util.Log.i(TAG, "Kokoro $provider warm-up finished in ${elapsedMs}ms")
+                }
+            }
+            candidate.onSuccess { engine ->
+                activeProviderLabel = if (provider == "nnapi") "NNAPI NPU" else "CPU"
+                activeModelLabel = if (selectedModelFile == FP32_MODEL_FILE) "HD-FP32 Vocoder" else "INT8"
+                android.util.Log.i(
+                    TAG,
+                    "Initialized Kokoro TTS model=$selectedModelFile provider=$provider threads=$threads"
+                )
+                return engine
+            }.onFailure { err ->
+                lastError = err
+                android.util.Log.w(TAG, "Kokoro provider '$provider' unavailable, falling back: ${err.message}")
             }
         }
+        throw (lastError ?: IllegalStateException("Kokoro 模型初始化失败"))
     }
+
+    private fun readyMessage(): String =
+        "Kokoro v1.0 ($activeModelLabel · $activeProviderLabel) · 24 kHz Studio 降噪 · 完全离线"
 
     private fun prepareEspeakData(): File {
         val root = File(noBackupFilesDir, MODEL_DIR).apply { mkdirs() }
@@ -347,8 +405,11 @@ class NaturalVoiceProcessService : Service() {
     private enum class State { NEW, LOADING, READY, FAILED }
 
     private companion object {
+        const val TAG = "Leap8Voice"
         const val MODEL_DIR = "kokoro-int8-multi-lang-v1_0"
+        const val FP32_MODEL_FILE = "model.onnx"
         const val MODEL_FILE = "model.int8.onnx"
-        const val READY_MESSAGE = "Kokoro v1.0 高品质语音 · 24 kHz · 英美声线 · 完全离线"
+        const val NATURAL_SILENCE_SCALE = 0.62f
+        const val MAX_NNAPI_WARMUP_MS = 450L
     }
 }

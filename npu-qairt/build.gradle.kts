@@ -21,7 +21,8 @@ if (!hexagonRuntime.isNullOrBlank()) {
             buildConfigField("String", "QAIRT_VERSION", "\"not-used-hexagon-b11982\"")
             consumerProguardFiles("consumer-rules.pro")
             externalNativeBuild.cmake {
-                arguments += "-DHEXAGON_RUNTIME=${runtimeRoot.invariantSeparatorsPath}"
+                cppFlags += listOf("-std=c++20", "-O3", "-fvisibility=hidden")
+                arguments += listOf("-DHEXAGON_RUNTIME=${runtimeRoot.invariantSeparatorsPath}", "-DANDROID_STL=c++_shared", "-DCMAKE_BUILD_TYPE=Release")
                 abiFilters += "arm64-v8a"
             }
         }
@@ -82,7 +83,7 @@ android {
         consumerProguardFiles("consumer-rules.pro")
         externalNativeBuild {
             cmake {
-                cppFlags += "-std=c++17"
+                cppFlags += "-std=c++20"
                 arguments += "-DQAIRT_PATH=$qairtPath"
                 abiFilters += "arm64-v8a"
             }

@@ -3,9 +3,9 @@ project(leap8_genie)
 
 if(DEFINED HEXAGON_RUNTIME)
     add_library(leap8_hexagon_jni SHARED HexagonEssayBridge.cpp)
-    target_compile_features(leap8_hexagon_jni PRIVATE cxx_std_17)
-    target_compile_options(leap8_hexagon_jni PRIVATE -Wall -Wextra)
-    target_link_options(leap8_hexagon_jni PRIVATE "-Wl,-z,max-page-size=16384")
+    target_compile_features(leap8_hexagon_jni PRIVATE cxx_std_20)
+    target_compile_options(leap8_hexagon_jni PRIVATE -O3 -fvisibility=hidden -ffunction-sections -fdata-sections -Wall -Wextra)
+    target_link_options(leap8_hexagon_jni PRIVATE -Wl,--gc-sections -Wl,-z,max-page-size=16384)
     target_include_directories(leap8_hexagon_jni PRIVATE "${HEXAGON_RUNTIME}/include")
     target_link_libraries(leap8_hexagon_jni PRIVATE
         "${HEXAGON_RUNTIME}/lib/libllama.so"
@@ -21,9 +21,9 @@ if(NOT DEFINED QAIRT_PATH OR NOT EXISTS "${QAIRT_PATH}/include/Genie/GenieDialog
 endif()
 
 add_library(leap8_genie SHARED GenieEssayBridge.cpp)
-target_compile_features(leap8_genie PRIVATE cxx_std_17)
-target_compile_options(leap8_genie PRIVATE -Wall -Wextra)
-target_link_options(leap8_genie PRIVATE "-Wl,-z,max-page-size=16384")
+target_compile_features(leap8_genie PRIVATE cxx_std_20)
+target_compile_options(leap8_genie PRIVATE -O3 -fvisibility=hidden -ffunction-sections -fdata-sections -Wall -Wextra)
+target_link_options(leap8_genie PRIVATE -Wl,--gc-sections -Wl,-z,max-page-size=16384)
 target_include_directories(leap8_genie PRIVATE "${QAIRT_PATH}/include/Genie")
 target_link_libraries(
     leap8_genie

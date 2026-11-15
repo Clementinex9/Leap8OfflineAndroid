@@ -196,26 +196,41 @@ void loadGpuBackend(const std::string & directory) {
     }
 }
 
-void reportProgress(JNIEnv * env, jobject listener, const std::string & output, int generated, int maximum) {
-    if (listener == nullptr) return;
+jmethodID resolveProgressMethod(JNIEnv * env, jobject listener) {
+    if (listener == nullptr) return nullptr;
     jclass listenerClass = env->GetObjectClass(listener);
     if (listenerClass == nullptr) throw std::runtime_error("Unable to inspect progress callback");
     jmethodID method = env->GetMethodID(listenerClass, "onProgress", "([BII)V");
-    if (method != nullptr) {
-        jbyteArray partial = toByteArray(env, output);
-        if (partial != nullptr) {
-            env->CallVoidMethod(listener, method, partial, static_cast<jint>(generated), static_cast<jint>(maximum));
-            env->DeleteLocalRef(partial);
-        }
-    }
     env->DeleteLocalRef(listenerClass);
+    if (env->ExceptionCheck()) throw std::runtime_error("Progress callback lookup failed");
+    return method;
+}
+
+void reportProgress(
+    JNIEnv * env,
+    jobject listener,
+    jmethodID method,
+    const std::string & output,
+    int generated,
+    int maximum
+) {
+    if (listener == nullptr || method == nullptr) return;
+    jbyteArray partial = toByteArray(env, output);
+    if (partial != nullptr) {
+        env->CallVoidMethod(listener, method, partial, static_cast<jint>(generated), static_cast<jint>(maximum));
+        env->DeleteLocalRef(partial);
+    }
     // Preserve cancellation/errors raised by the caller; continuing JNI work with a
     // pending exception is invalid and swallowing it can keep a cancelled job alive.
     if (env->ExceptionCheck()) throw std::runtime_error("Progress callback failed");
 }
 
-std::string tokenPiece(const llama_vocab * vocab, llama_token token) {
-    std::vector<char> buffer(128);
+void appendTokenPiece(
+    const llama_vocab * vocab,
+    llama_token token,
+    std::vector<char> & buffer,
+    std::string & output
+) {
     int written = llama_token_to_piece(
         vocab, token, buffer.data(), static_cast<int32_t>(buffer.size()), 0, false
     );
@@ -225,8 +240,9 @@ std::string tokenPiece(const llama_vocab * vocab, llama_token token) {
             vocab, token, buffer.data(), static_cast<int32_t>(buffer.size()), 0, false
         );
     }
-    if (written <= 0) return {};
-    return std::string(buffer.data(), static_cast<size_t>(written));
+    if (written > 0) {
+        output.append(buffer.data(), static_cast<size_t>(written));
+    }
 }
 
 std::string formatPrompt(
@@ -437,23 +453,25 @@ Java_com_leap8_llama_LlamaNative_nativeGenerate(
         auto sampler = makeSampler(temperature);
         if (!sampler) throw std::runtime_error("Unable to create the token sampler");
 
+        jmethodID progressMethod = resolveProgressMethod(env, listener);
         std::string output;
         output.reserve(static_cast<size_t>(outputLimit) * 4);
+        std::vector<char> pieceBuffer(256);
         int generatedTokens = 0;
         const auto decodeStarted = std::chrono::steady_clock::now();
         for (int i = 0; i < outputLimit; ++i) {
             llama_token token = llama_sampler_sample(sampler.get(), engine->context, -1);
             if (llama_vocab_is_eog(engine->vocab, token)) break;
-            output += tokenPiece(engine->vocab, token);
+            appendTokenPiece(engine->vocab, token, pieceBuffer, output);
             generatedTokens = i + 1;
             llama_batch next = llama_batch_get_one(&token, 1);
             int result = llama_decode(engine->context, next);
             if (result != 0) throw std::runtime_error("Token decoding failed: " + std::to_string(result));
             // The UI only needs token counts. Avoid repeatedly copying the entire growing output
             // across JNI; the complete text is sent once at the end.
-            if ((i + 1) % 16 == 0) reportProgress(env, listener, "", i + 1, outputLimit);
+            if ((i + 1) % 16 == 0) reportProgress(env, listener, progressMethod, "", i + 1, outputLimit);
         }
-        reportProgress(env, listener, output, generatedTokens, outputLimit);
+        reportProgress(env, listener, progressMethod, output, generatedTokens, outputLimit);
         llama_synchronize(engine->context);
         const auto decodeFinished = std::chrono::steady_clock::now();
         engine->inputTokens = static_cast<int64_t>(tokens.size());

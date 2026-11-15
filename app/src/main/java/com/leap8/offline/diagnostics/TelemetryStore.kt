@@ -2,6 +2,7 @@ package com.leap8.offline.diagnostics
 
 import android.content.Context
 import android.util.AtomicFile
+import com.leap8.offline.core.Leap8CoreNative
 import com.leap8.offline.domain.AiProcessor
 import com.leap8.offline.domain.AiProvider
 import org.json.JSONArray
@@ -167,10 +168,8 @@ internal object TelemetryCodec {
         )
     }
 
-    private fun safeModel(value: String): String {
-        if (sensitive.containsMatchIn(value)) return ""
-        return value.take(120).filter { it.isLetterOrDigit() || it in " ._-/+():@" }.trim()
-    }
+    private fun safeModel(value: String): String =
+        Leap8CoreNative.sanitizeModelLabel(value, strictWhitelist = true)
     private fun safeSource(value: String) = value.takeIf { it in sources } ?: "UNAVAILABLE"
     private fun putCount(json: JSONObject, key: String, value: Int?) {
         value?.takeIf { it.toLong() in 0..MAX_TOKENS }?.let { json.put(key, it) }

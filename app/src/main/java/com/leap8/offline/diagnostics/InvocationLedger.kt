@@ -1,5 +1,6 @@
 package com.leap8.offline.diagnostics
 
+import com.leap8.offline.core.Leap8CoreNative
 import com.leap8.offline.domain.AiGenerationProgress
 import com.leap8.offline.domain.AiProcessor
 import com.leap8.offline.domain.AiProvider
@@ -74,6 +75,5 @@ internal class InvocationLedger(enabled: Boolean, history: List<InvocationRecord
     }
 }
 
-internal fun safeModelLabel(model: String): String = model
-    .replace(Regex("(?i)(sk[-_]|bearer\\s+)[A-Za-z0-9._-]+"), "[已隐藏]")
-    .filterNot { it.isISOControl() }.take(120)
+internal fun safeModelLabel(model: String): String =
+    Leap8CoreNative.sanitizeModelLabel(model, strictWhitelist = false)

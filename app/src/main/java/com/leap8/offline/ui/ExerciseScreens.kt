@@ -167,16 +167,7 @@ internal fun WordbookScreen(viewModel: LearningViewModel) {
     val filtered by produceState(initialValue = snapshot.entries, snapshot.entries, term, filter) {
         val entries = snapshot.entries
         value = withContext(Dispatchers.Default) {
-            entries.filter { entry ->
-                val matches = when (filter) {
-                    "新词" -> entry.state == WordLearningState.NEW
-                    "学习中" -> entry.state == WordLearningState.LEARNING
-                    "已掌握" -> entry.state == WordLearningState.MASTERED
-                    "待复习" -> entry.isDue
-                    else -> true
-                }
-                matches && (term.isBlank() || entry.card.word.contains(term, true) || entry.card.meaningZh.contains(term, true))
-            }
+            com.leap8.offline.data.NativeWordbookFilter.filter(entries, filter, term)
         }
     }
     val context = LocalContext.current

@@ -51,10 +51,13 @@ std::string bytes(JNIEnv *env, jbyteArray input) {
     if (value.find('\0') != std::string::npos) throw std::runtime_error("NUL in Hexagon input");
     return value;
 }
-jbyteArray toBytes(JNIEnv *env, const std::string &value) {
-    auto result = env->NewByteArray(static_cast<jsize>(value.size()));
-    if (result) env->SetByteArrayRegion(result, 0, static_cast<jsize>(value.size()), reinterpret_cast<const jbyte *>(value.data()));
+jbyteArray toBytes(JNIEnv *env, const char *data, size_t size) {
+    auto result = env->NewByteArray(static_cast<jsize>(size));
+    if (result && size > 0) env->SetByteArrayRegion(result, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte *>(data));
     return result;
+}
+jbyteArray toBytes(JNIEnv *env, const std::string &value) {
+    return toBytes(env, value.data(), value.size());
 }
 void fail(JNIEnv *env, const char *message, bool invalidInput = false) {
     if (!env->ExceptionCheck()) {
@@ -142,6 +145,8 @@ Java_com_leap8_qairt_HexagonEssayBridge_nativeGenerate(JNIEnv *env, jobject, jby
             if (!accept || env->ExceptionCheck()) throw std::runtime_error("Invalid NPU stream consumer");
         }
         std::string output;
+        output.reserve(static_cast<size_t>(limit) * 4);
+        std::vector<char> piece(256);
         int generated = 0;
         const auto decodeStarted = std::chrono::steady_clock::now();
         for (int i = 0; i < limit; ++i) {
@@ -149,7 +154,6 @@ Java_com_leap8_qairt_HexagonEssayBridge_nativeGenerate(JNIEnv *env, jobject, jby
             if (llama_vocab_is_eog(vocab, token)) break;
             ++generated; // Count tokens even when their UTF-8 piece is empty.
             llama_sampler_accept(sampler.get(), token);
-            std::vector<char> piece(256);
             int length = llama_token_to_piece(vocab, token, piece.data(), static_cast<int32_t>(piece.size()), 0, false);
             if (length < 0) {
                 piece.resize(static_cast<size_t>(-length));
@@ -158,7 +162,7 @@ Java_com_leap8_qairt_HexagonEssayBridge_nativeGenerate(JNIEnv *env, jobject, jby
             if (length < 0) throw std::runtime_error("NPU token conversion failed");
             output.append(piece.data(), length);
             if (consumer && length) {
-                auto chunk = toBytes(env, std::string(piece.data(), length));
+                auto chunk = toBytes(env, piece.data(), static_cast<size_t>(length));
                 if (chunk) { env->CallVoidMethod(consumer, accept, chunk); env->DeleteLocalRef(chunk); }
                 if (env->ExceptionCheck()) throw std::runtime_error("NPU stream cancelled");
             }

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.31.6)
 project(leap8_llama_jni VERSION 1.0.0 LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT ANDROID_ABI STREQUAL "arm64-v8a")
@@ -21,6 +21,9 @@ add_library(ggml-base SHARED IMPORTED)
 set_target_properties(ggml-base PROPERTIES IMPORTED_LOCATION "${PREBUILT_DIR}/libggml-base.so")
 
 add_library(leap8_llama_jni SHARED leap8_llama_jni.cpp)
+target_compile_features(leap8_llama_jni PRIVATE cxx_std_20)
+target_compile_options(leap8_llama_jni PRIVATE -O3 -fvisibility=hidden -ffunction-sections -fdata-sections)
+target_link_options(leap8_llama_jni PRIVATE -Wl,--gc-sections -Wl,-z,max-page-size=16384)
 target_include_directories(leap8_llama_jni PRIVATE
     "${VENDOR_DIR}/include"
     "${VENDOR_DIR}/ggml/include"
